@@ -114,6 +114,15 @@
   #damageFlash.impact.hit { border: 18px solid rgba(255,77,49,.72); box-shadow: inset 0 0 115px rgba(255,44,20,.38); animation: impactFlash .4s ease-out; }
   @keyframes impactFlash { 0% { opacity: .9; } 36% { opacity: .34; } 58% { opacity: .68; } 100% { opacity: 0; } }
 
+  /* ---------- 慢镜画面反馈 ---------- */
+  #slowMo {
+    position: fixed; inset: 0; z-index: 14; opacity: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 34%, rgba(120,150,215,.09) 58%, rgba(6,12,26,.5) 100%);
+    box-shadow: inset 0 0 140px rgba(10,20,45,.55);
+    transition: opacity .12s linear;
+    backdrop-filter: blur(1.5px) saturate(1.1);
+  }
+
   /* ---------- 撞毁警车的全屏通报（参考热力追踪式处理） ---------- */
   #takedown { position: fixed; inset: 0; z-index: 15; opacity: 0; pointer-events: none; }
   #takedown.show { animation: takedownLife 1.85s ease-out forwards; }
@@ -207,6 +216,7 @@
 <div id="app"></div>
 <div class="vignette"></div>
 <div id="damageFlash"></div>
+<div id="slowMo"></div>
 <div id="takedown">
   <div class="tdWash"></div>
   <div class="tdBars"></div>

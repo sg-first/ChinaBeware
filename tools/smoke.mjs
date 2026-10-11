@@ -132,6 +132,35 @@ const takedownFeedback = await page.evaluate(() => {
   };
 });
 console.log('撞毁警车通报:', JSON.stringify(takedownFeedback));
+// 慢镜是否真正生效：对比同等帧数内的位移
+// 用“真实时间 / 模拟推进时间”的比值直接判断慢镜是否生效，避免帧率波动干扰
+const slowMoProbe = await page.evaluate(async () => {
+  const g = window.__GAME;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const sample = async () => {
+    const a = g.clocks;
+    await sleep(600);
+    const b = g.clocks;
+    return { real: b.real - a.real, sim: b.sim - a.sim };
+  };
+  // 先等上一轮慢镜完全恢复，再取基准
+  while (g.timeScale < 1) await sleep(120);
+  const normal = await sample();
+  g.S.policeDestroyed = 1;
+  g.showTakedown(1400);
+  const scale = g.timeScale;
+  const slow = await sample();
+  await sleep(700);
+  return {
+    timeScaleAtTrigger: +scale.toFixed(2),
+    timeScaleAfter: +g.timeScale.toFixed(2),
+    holdLeft: +g.timeScaleHold.toFixed(2),
+    normalSimPerReal: +(normal.sim / (normal.real || 1)).toFixed(2),
+    slowSimPerReal: +(slow.sim / (slow.real || 1)).toFixed(2),
+    vignette: +getComputedStyle(document.getElementById('slowMo')).opacity,
+  };
+});
+console.log('慢镜效果:', JSON.stringify(slowMoProbe));
 await page.screenshot({ path: 'e:/ChinaBeware/tools/shot_takedown.png' });
 await page.evaluate(() => window.__GAME.police.reset(window.__GAME.player, 3));
 await page.waitForTimeout(150);

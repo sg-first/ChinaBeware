@@ -260,11 +260,13 @@ const radioText = document.getElementById('radioText');
 const healthText = document.getElementById('healthText');
 const healthFill = document.getElementById('healthFill');
 const scoreValue = document.getElementById('scoreValue');
+const slowMoVignette = document.getElementById('slowMo');
 const takedown = document.getElementById('takedown');
 const tdScore = takedown.querySelector('.tdScore');
 const tdCount = takedown.querySelector('.tdCount');
 
 let msgTimer = null, radioTimer = null, tdTimer = null, timeScale = 1, timeScaleHold = 0, camZoomPunch = 0;
+let realElapsed = 0, simElapsed = 0;
 function showTakedown(score) {
   tdScore.textContent = `+${score}`;
   tdCount.textContent = `累计摧毁 ${S.policeDestroyed} 辆`;
@@ -273,9 +275,9 @@ function showTakedown(score) {
   takedown.classList.add('show');
   clearTimeout(tdTimer);
   tdTimer = setTimeout(() => takedown.classList.remove('show'), 1900);
-  timeScale = 0.4;
-  timeScaleHold = 0.55;
-  camZoomPunch = -7;
+  timeScale = 0.18;
+  timeScaleHold = 0.85;
+  camZoomPunch = -9;
 }
 function showMsg(text, cls = '', dur = 2000, kicker = '') {
   const impact = cls === 'impact';
@@ -407,6 +409,8 @@ window.__GAME = {
   get playerVisual() { return playerVisual; },
   get nearest() { return nearestPolice; },
   get timeScale() { return timeScale; },
+  get timeScaleHold() { return timeScaleHold; },
+  get clocks() { return { real: realElapsed, sim: simElapsed }; },
 };
 
 function loop() {
@@ -414,13 +418,18 @@ function loop() {
   const dt = Math.min(0.033, clock.getDelta());
   const time = clock.elapsedTime;
 
-  // 撞毁警车时的短促慢镜，让通报更有分量
+  // 撞毁警车时的短促慢镜：先维持极慢，再平滑恢复正常速度
   if (timeScaleHold > 0) {
     timeScaleHold -= dt;
-    timeScale += (0.4 - timeScale) * 0.1;
-    if (timeScaleHold <= 0) timeScale = 1;
+    if (timeScaleHold <= 0) timeScaleHold = 0;
+  } else if (timeScale < 1) {
+    timeScale += (1 - timeScale) * Math.min(1, dt * 3.2);
+    if (timeScale > 0.985) timeScale = 1;
   }
   const simDt = dt * timeScale;
+  realElapsed += dt;
+  simElapsed += simDt;
+  slowMoVignette.style.opacity = timeScale < 0.99 ? `${(1 - timeScale) * 0.85}` : '0';
 
   if (S.running) {
     S.elapsed += dt;
