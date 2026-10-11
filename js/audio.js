@@ -115,4 +115,56 @@ export class GameAudio {
     src.start();
     src.stop(ctx.currentTime + 0.35);
   }
+
+  /* 撞毁警车：低频轰击 + 金属拖音 + 上扬计分音 */
+  takedown() {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+
+    const boom = ctx.createBufferSource();
+    boom.buffer = this.noiseBuf;
+    const boomFilter = ctx.createBiquadFilter();
+    boomFilter.type = 'lowpass';
+    boomFilter.frequency.setValueAtTime(900, t);
+    boomFilter.frequency.exponentialRampToValueAtTime(90, t + 0.55);
+    const boomGain = ctx.createGain();
+    boomGain.gain.setValueAtTime(0.42, t);
+    boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+    boom.connect(boomFilter); boomFilter.connect(boomGain); boomGain.connect(this.master);
+    boom.start(t); boom.stop(t + 0.8);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(120, t);
+    sub.frequency.exponentialRampToValueAtTime(42, t + 0.5);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.34, t);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    sub.connect(subGain); subGain.connect(this.master);
+    sub.start(t); sub.stop(t + 0.65);
+
+    const metal = ctx.createBufferSource();
+    metal.buffer = this.noiseBuf;
+    const metalFilter = ctx.createBiquadFilter();
+    metalFilter.type = 'bandpass';
+    metalFilter.frequency.value = 1750;
+    metalFilter.Q.value = 3.2;
+    const metalGain = ctx.createGain();
+    metalGain.gain.setValueAtTime(0.001, t + 0.02);
+    metalGain.gain.linearRampToValueAtTime(0.2, t + 0.06);
+    metalGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    metal.connect(metalFilter); metalFilter.connect(metalGain); metalGain.connect(this.master);
+    metal.start(t + 0.02); metal.stop(t + 0.55);
+
+    const ding = ctx.createOscillator();
+    ding.type = 'triangle';
+    ding.frequency.setValueAtTime(620, t + 0.26);
+    ding.frequency.setValueAtTime(930, t + 0.36);
+    const dingGain = ctx.createGain();
+    dingGain.gain.setValueAtTime(0.001, t + 0.26);
+    dingGain.gain.linearRampToValueAtTime(0.13, t + 0.3);
+    dingGain.gain.exponentialRampToValueAtTime(0.001, t + 0.62);
+    ding.connect(dingGain); dingGain.connect(this.master);
+    ding.start(t + 0.26); ding.stop(t + 0.65);
+  }
 }

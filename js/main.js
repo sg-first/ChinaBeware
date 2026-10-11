@@ -224,7 +224,9 @@ function updateCamera(dt, firstPerson) {
       .addScaledVector(player.vel, 0.22)
       .add(new THREE.Vector3(0, 1.4, 0));
     camLook.lerp(lookAhead, 1 - Math.exp(-dt * 7));
-    camera.fov = 70 + speedT * 14;
+    camera.fov = 70 + speedT * 14 + camZoomPunch;
+    camZoomPunch *= Math.exp(-dt * 4.5);
+    if (Math.abs(camZoomPunch) < 0.05) camZoomPunch = 0;
   }
 
   // 碰撞抖动
@@ -258,8 +260,23 @@ const radioText = document.getElementById('radioText');
 const healthText = document.getElementById('healthText');
 const healthFill = document.getElementById('healthFill');
 const scoreValue = document.getElementById('scoreValue');
+const takedown = document.getElementById('takedown');
+const tdScore = takedown.querySelector('.tdScore');
+const tdCount = takedown.querySelector('.tdCount');
 
-let msgTimer = null, radioTimer = null;
+let msgTimer = null, radioTimer = null, tdTimer = null, timeScale = 1, timeScaleHold = 0, camZoomPunch = 0;
+function showTakedown(score) {
+  tdScore.textContent = `+${score}`;
+  tdCount.textContent = `累计摧毁 ${S.policeDestroyed} 辆`;
+  takedown.classList.remove('show');
+  void takedown.offsetWidth;
+  takedown.classList.add('show');
+  clearTimeout(tdTimer);
+  tdTimer = setTimeout(() => takedown.classList.remove('show'), 1900);
+  timeScale = 0.4;
+  timeScaleHold = 0.55;
+  camZoomPunch = -7;
+}
 function showMsg(text, cls = '', dur = 2000, kicker = '') {
   const impact = cls === 'impact';
   bigMsg.className = '';
@@ -346,6 +363,11 @@ function startGame() {
   player.health = 100;
   collisionFeedbackCooldown = 0;
   damageCooldown = 0;
+  timeScale = 1;
+  timeScaleHold = 0;
+  camZoomPunch = 0;
+  clearTimeout(tdTimer);
+  takedown.classList.remove('show');
   S.wavesSurvived = 0;
   S.heatLevel = 1;
   S.policeDestroyed = 0;
@@ -381,15 +403,24 @@ const clock = new THREE.Clock();
 let nearestPolice = 1e9;
 // 调试用（浏览器控制台可查看）
 window.__GAME = {
-  player, police, world, S, scene, renderer, camera,
+  player, police, world, S, scene, renderer, camera, showTakedown,
   get playerVisual() { return playerVisual; },
   get nearest() { return nearestPolice; },
+  get timeScale() { return timeScale; },
 };
 
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.033, clock.getDelta());
   const time = clock.elapsedTime;
+
+  // 撞毁警车时的短促慢镜，让通报更有分量
+  if (timeScaleHold > 0) {
+    timeScaleHold -= dt;
+    timeScale += (0.4 - timeScale) * 0.1;
+    if (timeScaleHold <= 0) timeScale = 1;
+  }
+  const simDt = dt * timeScale;
 
   if (S.running) {
     S.elapsed += dt;
@@ -404,17 +435,17 @@ function loop() {
     player.brake = inp.brake;
     player.steerInput = inp.steer;
     player.handbrake = inp.handbrake;
-    player.update(dt);
+    player.update(simDt);
     if (playerVisual) {
-      syncVisual(playerVisual, player, dt);
+      syncVisual(playerVisual, player, simDt);
       updateCarVisual(playerVisual, player, camera, time, { lightsOn: true });
     }
 
     /* --- 特效 --- */
-    spawnTireMarks(dt);
+    spawnTireMarks(simDt);
     updateMarks(dt);
-    spawnSpray(dt);
-    updateSpray(dt);
+    spawnSpray(simDt);
+    updateSpray(simDt);
 
     /* --- 警车、无线电与动态事件 --- */
     collisionFeedbackCooldown = Math.max(0, collisionFeedbackCooldown - dt);
@@ -425,7 +456,7 @@ function loop() {
     S.score += dt * (7 + S.heatLevel * 2);
 
     const oldPoliceCount = S.lastPoliceCount;
-    nearestPolice = police.update(dt, player);
+    nearestPolice = police.update(simDt, player);
     for (const event of police.consumeEvents()) {
       if (event.type === 'ram') {
         showMsg(`警车耐久 ${Math.ceil(event.health)}%`, 'impact', 1000, '撞击命中 · RAM');
@@ -433,7 +464,9 @@ function loop() {
       } else if (event.type === 'destroy') {
         S.policeDestroyed++;
         S.score += 1400;
-        showMsg('警车报废  +1400', 'impact', 1600, '追击单位已摧毁');
+        showTakedown(1400);
+        camShake = Math.min(0.5, camShake + 0.28);
+        audio.takedown();
         showRadio('无线电：一辆警车失去行动，增援正在补位');
       }
     }

@@ -83,6 +83,7 @@ const ramTest = await page.evaluate(() => {
     unit.ramCooldown = 0;
     g.police.update(0, g.player);
   }
+  g.police.consumeEvents();
   const result = {
     before,
     rearChaseHealth,
@@ -109,6 +110,30 @@ const ramTest = await page.evaluate(() => {
   return result;
 });
 console.log('撞击警车测试:', JSON.stringify(ramTest));
+await page.evaluate(() => {
+  window.__GAME.S.policeDestroyed = 1;
+  window.__GAME.showTakedown(1400);
+});
+await page.waitForTimeout(400);
+const takedownFeedback = await page.evaluate(() => {
+  const el = document.getElementById('takedown');
+  const title = el.querySelector('.tdTitle');
+  return {
+    visible: el.classList.contains('show'),
+    animation: `${getComputedStyle(el).animationName} ${getComputedStyle(el).animationPlayState} ${getComputedStyle(el).animationDuration}`,
+    titleAnimation: getComputedStyle(title).animationName,
+    animState: el.getAnimations()[0]?.playState,
+    // 软件渲染下动画时间轴几乎不推进，这里只断言运行状态，实际观感需在真实浏览器查看
+    title: title.textContent,
+    titleAnimation: getComputedStyle(title).animationName,
+    score: el.querySelector('.tdScore').textContent,
+    count: el.querySelector('.tdCount').textContent,
+    slowMotion: +window.__GAME.timeScale.toFixed(2),
+  };
+});
+console.log('撞毁警车通报:', JSON.stringify(takedownFeedback));
+await page.screenshot({ path: 'e:/ChinaBeware/tools/shot_takedown.png' });
+await page.evaluate(() => window.__GAME.police.reset(window.__GAME.player, 3));
 await page.waitForTimeout(150);
 console.log('受损反馈:', await page.evaluate(() => ({
   health: Math.round(window.__GAME.player.health),
