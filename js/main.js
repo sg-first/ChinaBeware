@@ -474,7 +474,9 @@ function loop() {
         S.policeDestroyed++;
         S.score += 1400;
         showTakedown(1400);
-        camShake = Math.min(0.5, camShake + 0.28);
+        const impactShake = 0.2 + Math.min(0.45, (event.impactSpeed || 0) * 0.018);
+        camShake = Math.min(0.72, camShake + impactShake);
+        camZoomPunch = Math.min(camZoomPunch, -6 - (event.impactSpeed || 0) * 0.12);
         audio.takedown();
         showRadio('无线电：一辆警车失去行动，增援正在补位');
       }

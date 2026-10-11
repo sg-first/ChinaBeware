@@ -84,6 +84,13 @@ const ramTest = await page.evaluate(() => {
     g.police.update(0, g.player);
   }
   g.police.consumeEvents();
+  const initialRotation = unit.visual.group.quaternion.clone();
+  const initialCenterY = unit.wreckMotion?.center.y ?? unit.car.pos.y;
+  const initialSpin = unit.wreckMotion?.angularVelocity.length() ?? 0;
+  const launchVelocity = unit.wreckMotion?.velocity.clone();
+  const impactDirection = unit.wreckImpact?.normal?.toArray() ?? null;
+  g.police.update(0.18, g.player);
+  const rotationChange = 1 - Math.abs(initialRotation.dot(unit.visual.group.quaternion));
   const result = {
     before,
     rearChaseHealth,
@@ -93,10 +100,14 @@ const ramTest = await page.evaluate(() => {
     wreckFx: !!unit.wreckFx && {
       smokeParticles: unit.wreckFx.smoke.geometry.attributes.position.count,
       sparks: unit.wreckFx.sparks.geometry.attributes.position.count,
-      wreckLabel: unit.wreckFx.label.material.map !== null,
       flameGlow: unit.wreckFx.glow.intensity > 0,
-      bodyTilt: Math.abs(unit.visual.body.rotation.z) > 0.4,
     },
+    impactDirection,
+    spinSpeed: +initialSpin.toFixed(2),
+    launchSpeed: +launchVelocity.length().toFixed(2),
+    launchUpSpeed: +launchVelocity.y.toFixed(2),
+    rotationChange: +rotationChange.toFixed(4),
+    airtimeHeightDelta: +(unit.wreckMotion.center.y - initialCenterY).toFixed(2),
     wreckLife: unit.wreckTimer,
     activePolice: g.police.units.length,
     playerHealthAfterRam: Math.round(g.player.health),

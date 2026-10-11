@@ -22,14 +22,6 @@ function makeWreckEffect(unit) {
   const group = new THREE.Group();
   unit.visual.group.add(group);
 
-  const scorch = new THREE.Mesh(
-    new THREE.CircleGeometry(2.2, 20),
-    new THREE.MeshBasicMaterial({ color: 0x171a1e, transparent: true, opacity: 0.58, depthWrite: false, side: THREE.DoubleSide }),
-  );
-  scorch.rotation.x = -Math.PI / 2;
-  scorch.position.y = 0.035;
-  group.add(scorch);
-
   const smokeCount = 26;
   const smokePositions = new Float32Array(smokeCount * 3);
   const smokeAges = new Float32Array(smokeCount);
@@ -89,6 +81,92 @@ function makeWreckEffect(unit) {
   };
 }
 
+function createWreckMotion(unit) {
+  const impact = unit.wreckImpact || {};
+  const normal = impact.normal ? impact.normal.clone().normalize() : unit.car.forward;
+  const relative = impact.relativeVelocity ? impact.relativeVelocity.clone() : unit.car.vel.clone();
+  const closing = impact.closingSpeed || relative.length() * 0.35;
+  const tangential = relative.clone().addScaledVector(normal, -relative.dot(normal));
+  const impulseVelocity = normal.clone().multiplyScalar(closing)
+    .addScaledVector(tangential, Math.min(tangential.length() * 0.28, closing * 0.55));
+
+  // 撞击点位于车身侧面/底盘，冲量叉乘力臂直接决定翻滚轴与角速度。
+  const lever = normal.clone().multiplyScalar(-1.35).add(new THREE.Vector3(0, -0.38, 0));
+  const angularVelocity = lever.cross(impulseVelocity.clone().multiplyScalar(0.95)).multiplyScalar(1 / 1.65);
+  if (angularVelocity.length() < 3.2) {
+    const lateral = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), normal);
+    angularVelocity.addScaledVector(lateral, 3.2 - angularVelocity.length());
+  }
+  if (angularVelocity.length() > 13.5) angularVelocity.setLength(13.5);
+
+  const orientation = unit.visual.group.quaternion.clone();
+  // 残骸先离地少许，确保腾空冲量不会被首帧接地约束吞掉。
+  const center = unit.car.pos.clone().add(new THREE.Vector3(0, 0.92, 0));
+  // 撞毁时把大部分冲量传给残骸：侧撞沿玩家来向飞出，正撞则向前/上方腾空。
+  const ejection = impulseVelocity.multiplyScalar(0.72);
+  const velocity = unit.car.vel.clone().add(ejection);
+  const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+  if (horizontalSpeed > 38) {
+    velocity.x *= 38 / horizontalSpeed;
+    velocity.z *= 38 / horizontalSpeed;
+  }
+  // 独立保留垂直冲量，避免总速度限幅把腾空分量抵消。
+  velocity.y = Math.max(0, velocity.y) + 7.2 + Math.min(8, closing * 0.3);
+
+  return { center, velocity, angularVelocity, orientation, grounded: false, impactSpeed: closing };
+}
+
+function updateWreckMotion(unit, dt, world) {
+  const motion = unit.wreckMotion;
+  const qDelta = new THREE.Quaternion();
+  const axis = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3(1, 0, 0);
+  const forward = new THREE.Vector3(0, 0, 1);
+
+  motion.velocity.y -= 9.8 * dt;
+  motion.center.addScaledVector(motion.velocity, dt);
+  const spin = motion.angularVelocity.length();
+  if (spin > 1e-4) {
+    axis.copy(motion.angularVelocity).multiplyScalar(1 / spin);
+    qDelta.setFromAxisAngle(axis, spin * dt);
+    motion.orientation.premultiply(qDelta).normalize();
+  }
+
+  up.applyQuaternion(motion.orientation);
+  right.set(1, 0, 0).applyQuaternion(motion.orientation);
+  forward.set(0, 0, 1).applyQuaternion(motion.orientation);
+  const support = Math.abs(up.y) * 0.72 + Math.abs(right.y) * 0.95 + Math.abs(forward.y) * 2.25;
+  const ground = world.height(motion.center.x, motion.center.z) + support;
+  motion.grounded = motion.center.y <= ground + 0.03;
+
+  if (motion.grounded) {
+    motion.center.y = ground;
+    if (motion.velocity.y < -1.4) {
+      const landingSpeed = -motion.velocity.y;
+      motion.velocity.y = landingSpeed * 0.2;
+      const landingAxis = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), motion.velocity);
+      if (landingAxis.lengthSq() > 1e-4) {
+        landingAxis.normalize().multiplyScalar(Math.min(1.2, landingSpeed * 0.035));
+        motion.angularVelocity.add(landingAxis);
+      }
+    } else {
+      motion.velocity.y = 0;
+    }
+    motion.velocity.x *= Math.exp(-dt * 1.5);
+    motion.velocity.z *= Math.exp(-dt * 1.5);
+    motion.angularVelocity.multiplyScalar(Math.exp(-dt * 0.68));
+  } else {
+    motion.angularVelocity.multiplyScalar(Math.exp(-dt * 0.12));
+  }
+
+  const localCom = new THREE.Vector3(0, 0.72, 0).applyQuaternion(motion.orientation);
+  unit.visual.group.position.copy(motion.center).sub(localCom);
+  unit.visual.group.quaternion.copy(motion.orientation);
+  unit.car.pos.copy(unit.visual.group.position);
+  unit.car.vel.copy(motion.velocity);
+}
+
 function updateWreckEffect(unit, dt) {
   const fx = unit.wreckFx;
   const smokePos = fx.smoke.geometry.attributes.position;
@@ -144,21 +222,22 @@ export class PoliceUnit {
     this.ramCooldown = 0;
     this.disabled = false;
     this.wreckTimer = 0;
+    this.wreckImpact = null;
+    this.wreckMotion = null;
     this.lightPhase = Math.random() * Math.PI * 2;
     this.active = true;
   }
 
-  applyRamDamage(amount) {
+  applyRamDamage(amount, impact = null) {
     if (this.disabled) return false;
     this.health = Math.max(0, this.health - amount);
     this.car.health = this.health;
     if (this.health <= 0) {
       this.disabled = true;
       this.wreckTimer = 6;
+      this.wreckImpact = impact;
       this.car.throttle = 0;
       this.car.brake = 0;
-      this.car.vel.multiplyScalar(0.35);
-      this.car.bodyRoll = (Math.random() - 0.5) * 0.18;
       return true;
     }
     return false;
@@ -338,7 +417,7 @@ export class PoliceManager {
       const roadblock = roleIndex === 2;
       const role = roadblock ? 'roadblock' : roleIndex === 0 ? 'pursuit-left' : 'pursuit-right';
       const policeHeading = playerCar.heading + (roadblock ? Math.PI : 0);
-      const url = POLICE_MODELS[(this.wave + i) % POLICE_MODELS.length];
+      const url = POLICE_MODELS[Math.floor(Math.random() * POLICE_MODELS.length)];
       const unit = new PoliceUnit(this.world, url);
       unit.role = role;
       let road = null;
@@ -390,7 +469,8 @@ export class PoliceManager {
         const overlap = 4.1 - dd;
         unit.car.pos.addScaledVector(n, overlap * 0.62);
         playerCar.pos.addScaledVector(n, -overlap * 0.38);
-        const relV = new THREE.Vector3().subVectors(unit.car.vel, playerCar.vel).dot(n);
+        const relativeVelocity = playerCar.vel.clone().sub(unit.car.vel);
+        const relV = -relativeVelocity.dot(n);
         const playerAlongImpact = playerCar.vel.dot(n);
         const playerSpeed = playerCar.vel.length();
         const impactAngle = playerSpeed > 0.01 ? playerAlongImpact / playerSpeed : -1;
@@ -399,7 +479,15 @@ export class PoliceManager {
         // 约 29 km/h 起可造成伤害，速度越高单次伤害越大；每车有独立冷却避免贴车连击。
         if (!unit.disabled && playerSpeed >= 8 && impactAngle > -0.5 && unit.ramCooldown <= 0) {
           const damage = THREE.MathUtils.clamp(9 + (playerSpeed - 8) * 1.15, 9, 24);
-          const isDestroyed = unit.applyRamDamage(damage);
+          const closingSpeed = Math.max(0, relativeVelocity.dot(n));
+          const impact = {
+            normal: n.clone(),
+            relativeVelocity: relativeVelocity.clone(),
+            closingSpeed: Math.max(closingSpeed, playerSpeed * 0.32),
+            playerSpeed,
+            impactAngle,
+          };
+          const isDestroyed = unit.applyRamDamage(damage, impact);
           unit.ramCooldown = 0.85;
           this.events.push({ type: 'ram', damage, health: unit.health, unit, impact: playerSpeed, angle: impactAngle });
           if (isDestroyed) destroyed.push(unit);
@@ -420,12 +508,10 @@ export class PoliceManager {
     for (const unit of destroyed) {
       const index = this.units.indexOf(unit);
       if (index >= 0) this.units.splice(index, 1);
-      unit.car.bodyPitch = 0.12;
-      unit.car.bodyRoll = (Math.random() < 0.5 ? -1 : 1) * (0.62 + Math.random() * 0.12);
-      unit.visual.body.rotation.x = unit.car.bodyPitch;
-      unit.visual.body.rotation.z = unit.car.bodyRoll;
-      unit.car.vel.multiplyScalar(0.3);
-      unit.car.angularVel = (Math.random() - 0.5) * 1.2;
+      unit.car.bodyPitch = 0;
+      unit.car.bodyRoll = 0;
+      unit.visual.body.rotation.set(0, 0, 0);
+      unit.wreckMotion = createWreckMotion(unit);
       unit.visual.body.traverse((object) => {
         if (!object.isMesh || !object.material) return;
         const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -439,7 +525,11 @@ export class PoliceManager {
       unit.wreckFx = makeWreckEffect(unit);
       updateWreckEffect(unit, 0);
       this.wrecks.push(unit);
-      this.events.push({ type: 'destroy', unit });
+      this.events.push({
+        type: 'destroy', unit,
+        impactSpeed: unit.wreckImpact?.closingSpeed || 0,
+        tumble: unit.wreckMotion.angularVelocity.length(),
+      });
       this.spawnCooldown = Math.max(this.spawnCooldown, 7.5);
     }
     if (expired.length && this.active) {
@@ -449,12 +539,7 @@ export class PoliceManager {
     for (let i = this.wrecks.length - 1; i >= 0; i--) {
       const wreck = this.wrecks[i];
       wreck.wreckTimer -= dt;
-      wreck.car.pos.addScaledVector(wreck.car.vel, dt);
-      wreck.car.vel.multiplyScalar(Math.exp(-dt * 2.2));
-      wreck.car.pos.y = this.world.height(wreck.car.pos.x, wreck.car.pos.z);
-      syncVisual(wreck.visual, wreck.car, dt);
-      wreck.car.heading += wreck.car.angularVel * dt;
-      wreck.car.angularVel *= Math.exp(-dt * 0.75);
+      updateWreckMotion(wreck, dt, this.world);
       updateCarVisual(wreck.visual, wreck.car, null, this.time, { isPolice: true, lightsOn: false, disabled: true });
       updateWreckEffect(wreck, dt);
       if (wreck.wreckTimer <= 0) {
