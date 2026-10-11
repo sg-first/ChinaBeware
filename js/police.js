@@ -64,29 +64,6 @@ function makeWreckEffect(unit) {
   glow.position.set(0, 1.2, 0.4);
   group.add(glow);
 
-  const labelCanvas = document.createElement('canvas');
-  labelCanvas.width = 320;
-  labelCanvas.height = 112;
-  const ctx = labelCanvas.getContext('2d');
-  ctx.fillStyle = 'rgba(16,8,8,.82)';
-  ctx.fillRect(5, 5, 310, 102);
-  ctx.strokeStyle = '#ff593e';
-  ctx.lineWidth = 6;
-  ctx.strokeRect(6, 6, 308, 100);
-  ctx.fillStyle = '#fff0df';
-  ctx.font = 'bold 42px Microsoft YaHei, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('警车报废', 160, 53);
-  ctx.fillStyle = '#ff856b';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('UNIT DISABLED', 160, 83);
-  const labelTex = new THREE.CanvasTexture(labelCanvas);
-  labelTex.colorSpace = THREE.SRGBColorSpace;
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthWrite: false }));
-  label.position.set(0, 5.4, 0);
-  label.scale.set(7.2, 2.52, 1);
-  group.add(label);
-
   const smokeTextureAttr = smoke.geometry.attributes.position;
   for (let i = 0; i < smokeCount; i++) {
     smokeAges[i] = Math.random() * 1.8;
@@ -108,7 +85,7 @@ function makeWreckEffect(unit) {
 
   return {
     group, smoke, smokeAges, smokePositions, sparks, sparkAges,
-    sparkPositions, sparkVelocities, flame, flameMat, glow, label,
+    sparkPositions, sparkVelocities, flame, flameMat, glow,
   };
 }
 
@@ -150,7 +127,6 @@ function updateWreckEffect(unit, dt) {
   fx.flame.scale.set(0.8 + flicker * 0.3, 0.75 + flicker * 0.65, 0.8 + flicker * 0.3);
   fx.flameMat.opacity = 0.68 + flicker * 0.28;
   fx.glow.intensity = 15 + flicker * 22;
-  fx.label.material.opacity = Math.min(1, unit.wreckTimer / 1.4);
 }
 
 export class PoliceUnit {
