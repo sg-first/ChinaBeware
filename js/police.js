@@ -220,6 +220,7 @@ export class PoliceUnit {
     this.role = 'pursuit';
     this.health = 100;
     this.ramCooldown = 0;
+    this.stagger = 0;        // 被撞击后的失控计时：期间失速 + 低抓地打滑
     this.disabled = false;
     this.wreckTimer = 0;
     this.wreckImpact = null;
@@ -295,10 +296,19 @@ export class PoliceUnit {
       if (car.stuckTimer > 4.5) car.stuckTimer = 0;
     }
 
+    /* --- 撞击失控：被顶飞期间失速，并拉手刹放掉侧向抓地让车真的滑出去 --- */
+    if (this.stagger > 0) {
+      this.stagger = Math.max(0, this.stagger - dt);
+      throttle = 0;
+      brake = 0;
+      steer *= 0.25;                    // 保留少量修正，避免完全不转向显得呆板
+    }
+
     car.steerInput = THREE.MathUtils.clamp(steer, -1, 1);
     car.throttle = throttle;
     car.brake = brake;
-    car.handbrake = Math.abs(diff) > 1.5 && speed > 14;   // 甩尾过弯
+    // 手刹时侧向抓地 = gripRoad * handbrakeGrip / 1.3 ≈ 1.45，侧滑保留时间由 0.3s 拉到约 0.7s
+    car.handbrake = (Math.abs(diff) > 1.5 && speed > 14) || this.stagger > 0;
 
     car.update(dt);
 
@@ -489,6 +499,8 @@ export class PoliceManager {
           };
           const isDestroyed = unit.applyRamDamage(damage, impact);
           unit.ramCooldown = 0.85;
+          // 撞击失控：速度越高失控越久（0.8s ~ 1.8s），期间失速打滑、被顶飞
+          unit.stagger = THREE.MathUtils.clamp(0.8 + (playerSpeed - 8) * 0.05, 0.8, 1.8);
           this.events.push({ type: 'ram', damage, health: unit.health, unit, impact: playerSpeed, angle: impactAngle });
           if (isDestroyed) destroyed.push(unit);
         }
