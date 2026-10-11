@@ -189,6 +189,7 @@ function updateSpray(dt) {
 
 /* ============ 相机 ============ */
 let camShake = 0;
+let camRoll = 0;                 // 弯道镜头横滚（弧度）
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 let camInit = false;
@@ -196,14 +197,24 @@ let camInit = false;
 function updateCamera(dt, firstPerson) {
   const fwd = player.forward;
   const speedT = Math.min(1, player.speedKmh / 160);
+  let rollTarget = 0;
   if (firstPerson) {
     camPos.copy(player.pos).add(new THREE.Vector3(0, 1.25, 0)).addScaledVector(fwd, 0.3);
     camLook.copy(player.pos).add(new THREE.Vector3(0, 1.1, 0)).addScaledVector(fwd, 30);
     camera.fov = 78 + speedT * 8;
   } else {
-    // 第三人称：落后 + 速度拉远 + 漂移侧移
-    const dist = 7.2 + speedT * 2.6;
-    const height = 3.1 + speedT * 0.7;
+    /* 第三人称追尾相机（参考 3A 赛车相机三点）：
+     * ① FOV 随速度增广，但按透视关系同步"拉近"相机 —— 修掉"越开越快、车越看越小、像玩具"；
+     * ② 高速降低机位 + 加大视线前瞻，速度感来自更广视野与更远路面，而非把车推远；
+     * ③ 弯道给镜头一点横滚（bank），提升代入感。 */
+    const baseFov = 66;
+    const fov = baseFov + speedT * 12;                 // 66 → 78，克制的增幅
+    camera.fov = fov + camZoomPunch;
+
+    // 车身屏幕尺寸 ∝ 1 / (距离 · tan(fov/2))：fov 变宽时按同一比例缩短距离，尺寸保持恒定
+    const fovComp = Math.tan(baseFov * Math.PI / 360) / Math.tan(fov * Math.PI / 360);
+    const dist = (6.9 + speedT * 1.4) * fovComp;       // 净效果：距离基本不增，甚至略近
+    const height = 2.9 - speedT * 0.5;                 // 高速降低机位，更贴地、少俯视
     const rgt = player.right;
     const side = THREE.MathUtils.clamp(player.vel.dot(rgt) * 0.12, -1.6, 1.6);
     const desired = new THREE.Vector3()
@@ -212,22 +223,30 @@ function updateCamera(dt, firstPerson) {
       .addScaledVector(rgt, side);
     desired.y = player.pos.y + height;
     // 相机不穿地
-    const gh = world.height(desired.x, desired.z) + 1.2;
+    const gh = world.height(desired.x, desired.z) + 1.1;
     if (desired.y < gh) desired.y = gh;
 
     if (!camInit) { camPos.copy(desired); camInit = true; }
+    // 转向滞后
     const lag = 1 - Math.exp(-dt * 4.5);
     camPos.lerp(desired, lag);
 
+    // 视线前瞻随速度增强：看得更远，速度感由视野提供而非把车推远
     const lookAhead = new THREE.Vector3()
       .copy(player.pos)
-      .addScaledVector(player.vel, 0.22)
-      .add(new THREE.Vector3(0, 1.4, 0));
-    camLook.lerp(lookAhead, 1 - Math.exp(-dt * 7));
-    camera.fov = 70 + speedT * 14 + camZoomPunch;
+      .addScaledVector(player.vel, 0.20 + speedT * 0.12)
+      .add(new THREE.Vector3(0, 1.35, 0));
+    camLook.lerp(lookAhead, 1 - Math.exp(-dt * (7 + speedT * 3)));
+
+    // 弯道横滚：随横向加速度轻微倾侧（约 ±2.9°），松手自动回正
+    rollTarget = THREE.MathUtils.clamp(
+      -player.angularVel * player.vel.dot(fwd) * 0.003, -0.05, 0.05
+    );
+
     camZoomPunch *= Math.exp(-dt * 4.5);
     if (Math.abs(camZoomPunch) < 0.05) camZoomPunch = 0;
   }
+  camRoll += (rollTarget - camRoll) * (1 - Math.exp(-dt * 5));
 
   // 碰撞抖动
   if (camShake > 0.001) {
@@ -239,6 +258,7 @@ function updateCamera(dt, firstPerson) {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
+  if (Math.abs(camRoll) > 0.0005) camera.rotateZ(camRoll);
   camera.updateProjectionMatrix();
 }
 
