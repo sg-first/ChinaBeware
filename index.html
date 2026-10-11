@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>雪岭逃亡 · 长白岭之夜</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; font-family: "SimHei", "黑体", "STHeiti", "Microsoft YaHei", sans-serif; color: #e8ecf4; z-index: 10; opacity: 0; transition: opacity .8s; }
+  #hud.show { opacity: 1; }
+
+  #speed {
+    position: absolute; right: 42px; bottom: 34px; text-align: right;
+    text-shadow: 0 0 12px rgba(0,0,0,.9), 0 2px 4px #000;
+  }
+  #speedVal { font-size: 58px; font-weight: 800; letter-spacing: 2px; line-height: 1; }
+  #speedUnit { font-size: 15px; letter-spacing: 6px; color: #93a3bd; margin-top: 2px; }
+
+  #policeHud {
+    position: absolute; left: 42px; top: 34px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .polRow { display: flex; align-items: center; gap: 10px; text-shadow: 0 2px 4px #000; }
+  .polDot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #ff2b2b; box-shadow: 0 0 10px #ff2b2b;
+    animation: strobe .5s steps(1) infinite;
+  }
+  .polDot.blue { background: #2b6bff; box-shadow: 0 0 10px #2b6bff; animation-delay: .25s; }
+  @keyframes strobe { 0%,49% { opacity: 1; } 50%,100% { opacity: .15; } }
+  .polText { font-size: 16px; letter-spacing: 3px; color: #d5dcea; }
+
+  #topCenter {
+    position: absolute; top: 30px; left: 50%; transform: translateX(-50%);
+    text-align: center; letter-spacing: 4px; font-size: 14px; color: #93a3bd;
+    text-shadow: 0 2px 4px #000;
+  }
+  #heatText { color: #ffd27a; }
+
+  #chaseBar {
+    position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%);
+    width: 320px; height: 5px; background: rgba(255,255,255,.12); border-radius: 3px;
+    overflow: hidden; opacity: 0; transition: opacity .3s;
+  }
+  #chaseBar.on { opacity: 1; }
+  #chaseFill { height: 100%; width: 0%; background: linear-gradient(90deg,#2b6bff,#ff2b2b); border-radius: 3px; }
+
+  #radarPanel { position: absolute; top: 32px; right: 38px; width: 152px; text-shadow: 0 2px 5px #000; }
+  #radarHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; font-size: 11px; letter-spacing: 2px; }
+  #wantedText { color: #ffd27a; font-weight: 800; }
+  #unitCount { color: #d8e2f5; }
+  #radar { position: relative; width: 132px; height: 132px; margin-left: auto; border: 1px solid rgba(180,205,255,.48); border-radius: 50%; overflow: hidden; background: radial-gradient(circle, rgba(24,43,66,.56), rgba(5,10,19,.82)); box-shadow: 0 0 20px rgba(32,72,130,.2), inset 0 0 20px rgba(90,130,200,.12); }
+  #radar::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent 49.5%, rgba(170,195,235,.22) 50%, transparent 50.5%), linear-gradient(0deg, transparent 49.5%, rgba(170,195,235,.22) 50%, transparent 50.5%), radial-gradient(circle, transparent 31%, rgba(170,195,235,.19) 32%, transparent 33%, transparent 64%, rgba(170,195,235,.19) 65%, transparent 66%); }
+  #radarPlayer { position: absolute; z-index: 2; left: 50%; top: 50%; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 14px solid #eaf3ff; transform: translate(-50%,-58%); filter: drop-shadow(0 0 4px #75b6ff); }
+  #radarDots { position: absolute; inset: 0; }
+  .radarDot { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: #ff4242; border: 1px solid #ffdada; box-shadow: 0 0 9px #ff2727; transform: translate(-50%,-50%); animation: blip .8s ease-in-out infinite alternate; }
+  .radarDot.roadblock { background: #ffbd45; box-shadow: 0 0 11px #ff9d28; }
+  @keyframes blip { from { opacity: .55; } to { opacity: 1; } }
+  #radioText { min-height: 17px; margin-top: 7px; color: rgba(200,213,236,.65); font-size: 10px; letter-spacing: 1px; text-align: right; transition: color .2s, opacity .2s; }
+  #radioText.active { color: #fff0be; opacity: 1; }
+
+  #vehicleHud { position: absolute; left: 42px; bottom: 105px; width: 190px; text-shadow: 0 2px 4px #000; }
+  #vehicleLabel { display: flex; justify-content: space-between; color: #c5d0e4; font-size: 11px; letter-spacing: 2px; margin-bottom: 5px; }
+  #healthTrack { width: 100%; height: 5px; background: rgba(255,255,255,.18); border-radius: 4px; overflow: hidden; }
+  #healthFill { display: block; height: 100%; width: 100%; background: linear-gradient(90deg,#ff5959,#ffd36e,#7de08a); transition: width .25s, background .25s; }
+  #scoreHud { position: absolute; right: 42px; bottom: 116px; text-align: right; text-shadow: 0 2px 5px #000; }
+  #scoreLabel { color: #9eacc5; font-size: 10px; letter-spacing: 3px; }
+  #scoreValue { color: #ffd27a; font-size: 21px; font-weight: 800; letter-spacing: 2px; }
+  #damageFlash { position: fixed; inset: 0; z-index: 9; opacity: 0; pointer-events: none; border: 10px solid rgba(255,45,45,.7); box-shadow: inset 0 0 100px rgba(255,20,20,.34); }
+  #damageFlash.hit { animation: damageFlash .42s ease-out; }
+  @keyframes damageFlash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+  #hint {
+    position: absolute; left: 42px; bottom: 34px; font-size: 13px; letter-spacing: 2px;
+    color: rgba(200,210,230,.45); text-shadow: 0 2px 4px #000; line-height: 1.9;
+  }
+
+  /* ---------- 大字提示 ---------- */
+  #bigMsg {
+    position: absolute; top: 31%; left: 50%; display: flex; flex-direction: column; align-items: center;
+    min-width: 230px; max-width: min(560px, 82vw); padding: 9px 24px 11px;
+    transform: translate(-50%, 8px); opacity: 0; white-space: nowrap;
+    color: #e7ddc8; text-align: center;
+    font-family: "FZHei-B01S", "SimHei", "黑体", "STHeiti", sans-serif;
+    text-shadow: 1px 2px 2px rgba(0,0,0,.9), 0 3px 8px rgba(0,0,0,.7);
+    transition: opacity .2s ease-out, transform .24s cubic-bezier(.2,.75,.25,1);
+  }
+  #bigMsg.show { opacity: 1; transform: translate(-50%, 0); }
+  #bigMsgKicker { margin-bottom: 3px; color: #c4a977; font: 700 10px/1.2 "SimHei", "黑体", sans-serif; letter-spacing: 3px; }
+  #bigMsgText { font-size: 27px; line-height: 1.2; font-weight: 900; letter-spacing: 4px; animation: eventRise .28s cubic-bezier(.18,.72,.25,1) both; }
+  @keyframes eventRise { from { opacity: 0; transform: translateY(9px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  #bigMsg.red #bigMsgText { color: #e88d77; }
+  #bigMsg.amber #bigMsgText { color: #e6c98d; }
+  #bigMsg.impact {
+    top: 15%; min-width: 260px; padding: 12px 32px 14px;
+    background: linear-gradient(90deg, transparent, rgba(39,17,16,.91) 13%, rgba(39,17,16,.91) 87%, transparent);
+    border-top: 1px solid rgba(222,93,67,.7); border-bottom: 1px solid rgba(222,93,67,.7);
+    box-shadow: 0 8px 26px rgba(0,0,0,.36), 0 0 25px rgba(180,48,30,.16);
+    backdrop-filter: blur(3px);
+  }
+  #bigMsg.impact::before, #bigMsg.impact::after {
+    content: ""; position: absolute; top: 5px; bottom: 5px; width: 3px; background: #df624a;
+    box-shadow: 0 0 10px rgba(236,75,50,.55);
+  }
+  #bigMsg.impact::before { left: 13px; }
+  #bigMsg.impact::after { right: 13px; }
+  #bigMsg.impact #bigMsgKicker { color: #e49375; letter-spacing: 4px; }
+  #bigMsg.impact #bigMsgText { color: #fff0df; font-size: 31px; letter-spacing: 5px; animation: impactStamp .34s cubic-bezier(.12,.76,.22,1) both; }
+  @keyframes impactStamp { 0% { opacity: 0; transform: translateX(-9px) scale(.92); } 65% { opacity: 1; transform: translateX(2px) scale(1.015); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
+  #damageFlash.impact.hit { border: 18px solid rgba(255,77,49,.72); box-shadow: inset 0 0 115px rgba(255,44,20,.38); animation: impactFlash .4s ease-out; }
+  @keyframes impactFlash { 0% { opacity: .9; } 36% { opacity: .34; } 58% { opacity: .68; } 100% { opacity: 0; } }
+
+  /* ---------- 开始 / 结束界面 ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(10,16,32,.62) 0%, rgba(3,5,10,.94) 100%);
+    font-family: "SimHei", "黑体", "STHeiti", "Microsoft YaHei", sans-serif; color: #e8ecf4;
+    transition: opacity .6s; cursor: default;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .title-en { font-size: 15px; letter-spacing: 14px; color: #6f82a5; margin-bottom: 14px; }
+  .title-cn { font-size: 68px; font-weight: 900; letter-spacing: 22px; text-indent: 22px;
+    text-shadow: 0 0 40px rgba(90,130,255,.55), 0 4px 10px #000; margin-bottom: 10px; }
+  .subtitle { font-size: 15px; letter-spacing: 5px; color: #93a3bd; margin-bottom: 44px; }
+  .keys { display: grid; grid-template-columns: auto auto; gap: 9px 26px; font-size: 15px;
+    letter-spacing: 2px; color: #b9c4da; margin-bottom: 48px; text-align: left; }
+  .keys b { color: #fff; font-weight: 700; background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.18); border-radius: 5px; padding: 2px 11px; margin-right: 4px;
+    font-family: Consolas, monospace; }
+  #startBtn, #restartBtn {
+    pointer-events: auto; cursor: pointer; font-size: 19px; letter-spacing: 10px; text-indent: 10px;
+    color: #fff; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.35);
+    padding: 15px 62px; border-radius: 3px; transition: all .25s; font-family: inherit;
+  }
+  #startBtn:hover, #restartBtn:hover { background: rgba(255,255,255,.16); box-shadow: 0 0 26px rgba(120,160,255,.35); }
+  #restartBtn { display: none; }
+  .note { margin-top: 26px; font-size: 12px; letter-spacing: 3px; color: rgba(150,165,195,.5); }
+  #endTitle { font-size: 56px; font-weight: 900; letter-spacing: 16px; text-indent: 16px; margin-bottom: 8px; }
+  #endSub { font-size: 16px; letter-spacing: 4px; color: #93a3bd; margin-bottom: 46px; }
+  #endStats { font-size: 15px; letter-spacing: 3px; color: #b9c4da; margin-bottom: 46px; line-height: 2.1; }
+  @media (max-width: 760px) {
+    #radarPanel { top: 14px; right: 12px; width: 108px; }
+    #radar { width: 94px; height: 94px; }
+    #radarHead { font-size: 9px; letter-spacing: 1px; }
+    #radioText { font-size: 8px; }
+    #policeHud { left: 14px; top: 15px; }
+    #vehicleHud { left: 14px; bottom: 85px; width: 145px; }
+    #hint { left: 14px; bottom: 14px; font-size: 10px; }
+    #speed { right: 14px; bottom: 14px; }
+    #speedVal { font-size: 42px; }
+    #scoreHud { right: 14px; bottom: 82px; }
+    #bigMsgText { font-size: 22px; letter-spacing: 3px; }
+    #bigMsg.impact #bigMsgText { font-size: 26px; letter-spacing: 3px; }
+    #bigMsg.impact { min-width: 230px; padding: 10px 24px 12px; }
+  }
+  .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(0,0,5,.55) 100%); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="vignette"></div>
+<div id="damageFlash"></div>
+
+<div id="hud">
+  <div id="speed">
+    <div id="speedVal">0</div>
+    <div id="speedUnit">KM/H</div>
+  </div>
+  <div id="policeHud">
+    <div class="polRow" id="polRow" style="display:none">
+      <div class="polDot"></div><div class="polDot blue"></div>
+      <div class="polText" id="polText">POLICE</div>
+    </div>
+  </div>
+  <div id="topCenter">
+    最近警车 <span id="heatText">--</span> &nbsp;·&nbsp; 甩脱进度
+  </div>
+  <div id="chaseBar"><div id="chaseFill"></div></div>
+  <div id="radarPanel">
+    <div id="radarHead"><span id="wantedText">追捕等级 1</span><span id="unitCount">0 辆</span></div>
+    <div id="radar"><div id="radarDots"></div><div id="radarPlayer"></div></div>
+    <div id="radioText">无线电：待命</div>
+  </div>
+  <div id="vehicleHud">
+    <div id="vehicleLabel"><span>车况</span><span id="healthText">100%</span></div>
+    <div id="healthTrack"><span id="healthFill"></span></div>
+  </div>
+  <div id="scoreHud"><div id="scoreLabel">逃亡积分</div><div id="scoreValue">000000</div></div>
+  <div id="hint">
+    W / S · 油门 倒车 &nbsp;&nbsp; A / D · 转向<br>
+    SPACE · 手刹漂移 &nbsp;&nbsp; R · 重新开始
+  </div>
+  <div id="bigMsg"><span id="bigMsgKicker"></span><span id="bigMsgText"></span></div>
+</div>
+
+<div class="overlay" id="startScreen">
+  <div class="title-en">GREAT KHINGAN PURSUIT</div>
+  <div class="title-cn">雪岭逃亡</div>
+  <div class="subtitle">暴雪之夜 · 大兴安岭 · 摆脱公安追缉</div>
+  <div class="keys">
+    <span><b>W</b><b>S</b></span><span>油门 / 刹车·倒车</span>
+    <span><b>A</b><b>D</b></span><span>转向</span>
+    <span><b>SPACE</b></span><span>手刹 · 雪地漂移</span>
+    <span><b>R</b></span><span>重新开始</span>
+  </div>
+  <button id="startBtn">点火出发</button>
+  <div class="note">雷达追踪警车方位 · 漂移/擦身得分 · 高速侧擦、斜撞或迎面撞击可摧毁警车，警车会增援</div>
+</div>
+
+<div class="overlay hidden" id="endScreen">
+  <div id="endTitle">已被抓获</div>
+  <div id="endSub"></div>
+  <div id="endStats"></div>
+  <button id="restartBtn">再来一次</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
