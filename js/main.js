@@ -1,6 +1,6 @@
 // main.js —— 游戏入口：场景、玩家、镜头、特效、HUD、游戏流程
 import * as THREE from 'three';
-import { World } from './world.js';
+import { World, preloadTreeModel } from './world.js';
 import { Vehicle, preloadCarModel, buildCarVisual, updateCarVisual } from './car.js';
 import { PoliceManager, syncVisual } from './police.js';
 import { GameAudio } from './audio.js';
@@ -75,11 +75,18 @@ const ALL_MODELS = [
   'assets/police1.fbx',
   'assets/police2.fbx',
 ];
+const TREE_MODEL = 'assets/tree.fbx';
 const startBtn = document.getElementById('startBtn');
 startBtn.disabled = true;
 startBtn.textContent = '模型加载中…';
 
-Promise.all(ALL_MODELS.map(preloadCarModel)).then(() => {
+Promise.all([
+  ...ALL_MODELS.map(preloadCarModel),
+  // 树模型资产：树木唯一来源，加载失败则场景无树（游戏仍可开始）
+  preloadTreeModel(TREE_MODEL)
+    .then((parts) => world.setTreeModel(parts))
+    .catch((err) => console.error('树模型加载失败，场景将没有树木', err)),
+]).then(() => {
   playerVisual = buildCarVisual(CAR_CFG.player.url, CAR_CFG.player);
   scene.add(playerVisual.group);
   startBtn.disabled = false;

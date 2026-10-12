@@ -1,5 +1,6 @@
 // world.js —— 无限分块雪原 + 程序化道路网 + 动态针叶林
 import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const CHUNK_SIZE = 320;
@@ -37,33 +38,65 @@ const terrainMat = new THREE.MeshStandardMaterial({
   map: makeSnowTexture(), vertexColors: true, roughness: 1, metalness: 0,
 });
 const roadMat = new THREE.MeshStandardMaterial({ map: makeRoadTexture(), roughness: 0.82, metalness: 0 });
-const trunkGeo = new THREE.CylinderGeometry(0.16, 0.3, 2.2, 5);
-trunkGeo.translate(0, 1.1, 0);
-const trunkMat = new THREE.MeshStandardMaterial({ color: 0x2e1f16, roughness: 1 });
-const foliageGeo = makeFoliageGeometry();
-const foliageMat = new THREE.MeshStandardMaterial({ color: 0x1d3326, roughness: 1, flatShading: true });
-const snowCapGeo = makeSnowCapGeometry();
-const snowCapMat = new THREE.MeshStandardMaterial({ color: 0xf3e7d5, roughness: 1, flatShading: true });
 
-function makeFoliageGeometry() {
-  const geos = [];
-  for (const [r, h, y] of [[1.9, 2.6, 2.6], [1.5, 2.2, 4.6], [1.0, 2.0, 6.3]]) {
-    const g = new THREE.ConeGeometry(r, h, 6);
-    g.translate(0, y, 0);
-    geos.push(g);
-  }
-  return mergeGeometries(geos);
-}
+/* ---------- 树模型资产（tree.fbx）----------
+ * 加载 → 归一化（目标高度/落地/居中）→ 按材质合并为若干几何体，
+ * 之后每个分块用 InstancedMesh 批量渲染。加载失败时退回程序化锥树。 */
+const TREE_ASSET_HEIGHT = 24;   // 归一化后的基准树高（米），再乘每棵的随机缩放
+const TREE_GIRTH = 1.32;        // 横向加粗系数：树更粗壮、树冠更开（大兴安岭成树感）
 
-function makeSnowCapGeometry() {
-  // 比树冠略大、略微上移的白色薄壳 —— 从上方看是积雪覆盖的树冠
-  const geos = [];
-  for (const [r, h, y] of [[1.9, 2.6, 2.6], [1.5, 2.2, 4.6], [1.0, 2.0, 6.3]]) {
-    const g = new THREE.ConeGeometry(r + 0.14, h * 0.72, 6);
-    g.translate(0, y + h * 0.2, 0);
-    geos.push(g);
-  }
-  return mergeGeometries(geos);
+export function preloadTreeModel(url) {
+  return new Promise((resolve, reject) => {
+    new FBXLoader().load(url, (fbx) => {
+      fbx.updateMatrixWorld(true);
+      // 收集网格并按材质分组（继承父级变换）
+      const groups = new Map();
+      fbx.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (!mat) return;
+        const g = o.geometry.clone();
+        g.applyMatrix4(o.matrixWorld);
+        const key = mat.name || 'mat';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ geo: g, mat });
+      });
+      if (!groups.size) { reject(new Error('tree.fbx 中没有网格')); return; }
+
+      // 整体包围盒 → 缩放/落地/居中
+      const box = new THREE.Box3();
+      for (const arr of groups.values()) {
+        for (const { geo } of arr) { geo.computeBoundingBox(); box.union(geo.boundingBox); }
+      }
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const s = TREE_ASSET_HEIGHT / Math.max(1e-6, size.y);
+
+      const parts = [];
+      for (const arr of groups.values()) {
+        for (const { geo } of arr) {
+          geo.scale(s, s, s);
+          geo.translate(-center.x * s, -box.min.y * s, -center.z * s);
+        }
+        const merged = arr.length > 1 ? mergeGeometries(arr.map((v) => v.geo)) : arr[0].geo;
+        const src = arr[0].mat;
+        const std = new THREE.MeshStandardMaterial({
+          map: src.map || null,
+          color: src.color ? src.color.clone() : new THREE.Color(0xffffff),
+          metalness: 0,
+          roughness: 1,
+          side: src.side !== undefined ? src.side : THREE.FrontSide,
+          transparent: !!src.transparent,
+          opacity: src.opacity !== undefined ? src.opacity : 1,
+          alphaTest: src.alphaTest || 0,
+        });
+        std.name = `tree_${src.name || 'mat'}`;
+        if (std.map) { std.map.colorSpace = THREE.SRGBColorSpace; std.map.anisotropy = 8; }
+        parts.push({ geo: merged, mat: std });
+      }
+      resolve(parts);
+    }, undefined, reject);
+  });
 }
 
 export class World {
@@ -73,9 +106,22 @@ export class World {
     this.treeGrid = new Map();
     this.gridCell = TREE_CELL;
     this.centerChunk = null;
+    this.treeParts = null;   // 树模型资产（加载后才生成树木）
+    this.sharedTreeGeos = new Set();   // 资产几何体，分块卸载时跳过释放
     this.buildLights();
     this.buildSnowfall();
     this.updateStreaming(0, 0, true);
+  }
+
+  /** 树模型资产就绪后调用：替换所有已加载分块的树 */
+  setTreeModel(parts) {
+    if (!parts || !parts.length) return;
+    this.treeParts = parts;
+    for (const p of parts) this.sharedTreeGeos.add(p.geo);
+    for (const [key, chunk] of [...this.chunks]) {
+      this.unloadChunk(key, chunk);
+      this.loadChunk(chunk.cx, chunk.cz, key);
+    }
   }
 
   buildLights() {
@@ -239,18 +285,18 @@ export class World {
     const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
     group.add(this.makeTerrainChunk(x0, z0));
     group.add(this.makeRoadChunk(x0, z0));
-    const trees = this.makeForestChunk(cx, cz);
-    if (trees.trunks.count) group.add(trees.trunks, trees.foliages, trees.snowcaps);
+    const forest = this.makeForestChunk(cx, cz);
+    for (const mesh of forest.meshes) group.add(mesh);
     this.scene.add(group);
-    for (const tree of trees.list) this.addTreeToGrid(tree);
-    this.chunks.set(key, { group, trees: trees.list, cx, cz });
+    for (const tree of forest.list) this.addTreeToGrid(tree);
+    this.chunks.set(key, { group, trees: forest.list, cx, cz });
   }
 
   unloadChunk(key, chunk) {
     this.scene.remove(chunk.group);
     for (const tree of chunk.trees) this.removeTreeFromGrid(tree);
     chunk.group.traverse((o) => {
-      if (o.isMesh && o.geometry !== trunkGeo && o.geometry !== foliageGeo && o.geometry !== snowCapGeo) o.geometry.dispose();
+      if (o.isMesh && !this.sharedTreeGeos.has(o.geometry)) o.geometry.dispose();
     });
     this.chunks.delete(key);
   }
@@ -334,38 +380,73 @@ export class World {
   }
 
   makeForestChunk(cx, cz) {
-    const count = 108;
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
-    const foliages = new THREE.InstancedMesh(foliageGeo, foliageMat, count);
-    const snowcaps = new THREE.InstancedMesh(snowCapGeo, snowCapMat, count);
+    // 树木只来自资产模型：资产未就绪时不生成（也不注册碰撞），
+    // 待 setTreeModel() 就绪后统一重建全部分块
+    if (!this.treeParts) return { meshes: [], list: [] };
+
+    // 离路越远越密：路侧留出视野与行车空间，深林成片加密
+    // 远处分块降密度：浓雾(~400m 外全遮)下外观无差别，但省一半以上三角面
+    const ring = this.centerChunk
+      ? Math.max(Math.abs(cx - this.centerChunk.x), Math.abs(cz - this.centerChunk.z))
+      : 0;
+    const density = ring === 0 ? 1 : ring === 1 ? 0.85 : 0.42;
+    const count = Math.round(260 * density);
     const list = [];
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), scale = new THREE.Vector3();
     const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
     let attempts = 0;
-    while (list.length < count && attempts < count * 12) {
+    while (list.length < count && attempts < count * 10) {
       const i = attempts++;
       const x = x0 + 6 + hash2(cx * 1009 + i, cz * 917 + 17) * (CHUNK_SIZE - 12);
       const z = z0 + 6 + hash2(cx * 613 + i, cz * 1031 + 91) * (CHUNK_SIZE - 12);
-      if (this.roadQuery(x, z).dist < 14) continue;
+      const roadDist = this.roadQuery(x, z).dist;
+      if (roadDist < 14) continue;
+      // 密度权重：路肩 0.34 → 深林（70m 外）1.0
+      const openness = THREE.MathUtils.smoothstep(roadDist, 14, 70);
+      if (hash2(i * 7 + 3, cx * 13 + cz) > 0.34 + 0.66 * openness) continue;
       const y = this.height(x, z);
       if (this.normal(x, z).y < 0.84) continue;
-      const s = 0.8 + hash2(i, cx * 31 + cz) * 1.7;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash2(i, cz * 19 + cx) * Math.PI * 2);
-      scale.set(s, s * (0.85 + hash2(i, 71) * 0.5), s);
-      m.compose(new THREE.Vector3(x, y - 0.2, z), q, scale);
-      const index = list.length;
-      trunks.setMatrixAt(index, m);
-      foliages.setMatrixAt(index, m);
-      snowcaps.setMatrixAt(index, m);
-      list.push({ x, z, r: 0.45 * s + 0.35, chunkKey: `${cx},${cz}` });
+      // 树高 ≈ 24m × (0.8~1.65) ≈ 19~40m，横向再乘加粗系数
+      const s = 0.8 + hash2(i, cx * 31 + cz) * 0.85;
+      list.push({
+        x, z, y,
+        s,
+        rotY: hash2(i, cz * 19 + cx) * Math.PI * 2,
+        r: 0.42 * s + 0.2,                              // 碰撞半径按加粗后的树干估算
+        tint: 0.9 + hash2(i, 57) * 0.2,                 // 逐实例明暗变化
+        chunkKey: `${cx},${cz}`,
+      });
     }
-    trunks.count = list.length;
-    foliages.count = list.length;
-    snowcaps.count = list.length;
-    trunks.instanceMatrix.needsUpdate = true;
-    foliages.instanceMatrix.needsUpdate = true;
-    snowcaps.instanceMatrix.needsUpdate = true;
-    return { trunks, foliages, snowcaps, list };
+    return { meshes: this.buildTreeMeshes(list), list };
+  }
+
+  /** 用树模型资产批量实例化（无资产时返回空，等资产就绪后重建） */
+  buildTreeMeshes(list) {
+    if (!this.treeParts || !list.length) return [];
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), scale = new THREE.Vector3();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const color = new THREE.Color();
+
+    // 每个材质分组一个 InstancedMesh
+    const meshes = this.treeParts.map((p) => {
+      const inst = new THREE.InstancedMesh(p.geo, p.mat, list.length);
+      inst.count = list.length;
+      return inst;
+    });
+    list.forEach((t, index) => {
+      q.setFromAxisAngle(yAxis, t.rotY);
+      scale.set(t.s * TREE_GIRTH, t.s, t.s * TREE_GIRTH);
+      m.compose(new THREE.Vector3(t.x, t.y - 0.2, t.z), q, scale);
+      color.setScalar(t.tint);
+      for (const inst of meshes) {
+        inst.setMatrixAt(index, m);
+        inst.setColorAt(index, color);
+      }
+    });
+    for (const inst of meshes) {
+      inst.instanceMatrix.needsUpdate = true;
+      if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    }
+    return meshes;
   }
 
   addTreeToGrid(tree) {
