@@ -21,7 +21,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.7;
+renderer.toneMappingExposure = 1.15;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -100,7 +100,7 @@ markGeo.rotateX(-Math.PI / 2);
 const marks = [];
 for (let i = 0; i < MARK_POOL; i++) {
   const mat = new THREE.MeshBasicMaterial({
-    color: 0x555a70, transparent: true, opacity: 0, depthWrite: false,
+    color: 0x4e4750, transparent: true, opacity: 0, depthWrite: false,
   });
   const m = new THREE.Mesh(markGeo, mat);
   m.visible = false;
@@ -148,8 +148,20 @@ const sprayVel = new Float32Array(SPRAY * 3);
 const sprayLife = new Float32Array(SPRAY);
 const sprayGeo = new THREE.BufferGeometry();
 sprayGeo.setAttribute('position', new THREE.BufferAttribute(sprayPos, 3));
+const sprayTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = 32; c.height = 32;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,250,240,0.7)');
+  grad.addColorStop(1, 'rgba(255,250,240,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+})();
 const spray = new THREE.Points(sprayGeo, new THREE.PointsMaterial({
-  color: 0xdde6f8, size: 0.7, transparent: true, opacity: 0.55, depthWrite: false,
+  color: 0xf6ebdd, size: 0.8, map: sprayTex, transparent: true, opacity: 0.6, depthWrite: false,
 }));
 spray.frustumCulled = false;
 scene.add(spray);
