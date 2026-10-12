@@ -450,6 +450,19 @@ function loop() {
   const dt = Math.min(0.033, clock.getDelta());
   const time = clock.elapsedTime;
 
+  input.beginFrame();   // 每帧刷新手柄状态 / 边沿动作
+
+  // 开始 / 结束界面：手柄 A 键或键盘 Enter 触发开始 / 重开
+  if (input.pressed('confirm')) {
+    const startScreen = document.getElementById('startScreen');
+    const endScreen = document.getElementById('endScreen');
+    if (!startScreen.classList.contains('hidden')) {
+      if (!startBtn.disabled) { audio.init(); startScreen.classList.add('hidden'); startGame(); }
+    } else if (!endScreen.classList.contains('hidden')) {
+      endScreen.classList.add('hidden'); startGame();
+    }
+  }
+
   // 撞毁警车时的短促慢镜：先维持极慢，再平滑恢复正常速度
   if (timeScaleHold > 0) {
     timeScaleHold -= dt;
@@ -468,9 +481,8 @@ function loop() {
 
     /* --- 玩家输入 --- */
     const inp = input.sample();
-    if (input.has('KeyC') && !S._cDown) { S.firstPerson = !S.firstPerson; S._cDown = true; }
-    if (!input.has('KeyC')) S._cDown = false;
-    if (input.has('KeyR')) { startGame(); document.getElementById('endScreen').classList.add('hidden'); }
+    if (input.pressed('firstPerson')) S.firstPerson = !S.firstPerson;
+    if (input.pressed('restart')) { startGame(); document.getElementById('endScreen').classList.add('hidden'); }
 
     player.throttle = inp.throttle;
     player.brake = inp.brake;
